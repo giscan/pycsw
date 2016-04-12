@@ -104,7 +104,9 @@ def parse_record(context, record, repos=None,
 
 def _set(context, obj, name, value):
     ''' convenience method to set values '''
-    setattr(obj, context.md_core_model['mappings'][name], value)
+    objname = context.md_core_model['mappings'][name]
+    if name is not None and objname is not None and value is not None:
+        setattr(obj, objname, value)
 
 def _parse_metadata(context, repos, record):
     """parse metadata formats"""

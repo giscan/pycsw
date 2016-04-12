@@ -28,13 +28,17 @@
 #
 # =================================================================
 
+from datetime import datetime
 from django.db import models
 from django.db import connection
 from django.db.models import Avg, Max, Min, Count
 from django.conf import settings
 
 from pycsw.core import util
-from geonode.base.models import ResourceBase
+from geonode.base.models import (GenericResource, ResourceBase, Region,
+                                 SpatialRepresentationType, TopicCategory)
+from geonode.layers.metadata import set_metadata
+from geonode.layers.utils import resolve_regions
 
 class GeoNodeRepository(object):
     ''' Class to interact with underlying repository '''
@@ -77,6 +81,11 @@ class GeoNodeRepository(object):
         for qbl in self.queryables:
             self.queryables['_all'].update(self.queryables[qbl])
         self.queryables['_all'].update(self.context.md_core_model['mappings'])
+
+
+    def dataset(self):
+        ''' Stub to mock a pycsw dataset object for Transactions'''
+        return type('GenericResource', (object,), {})
 
     def query_ids(self, ids):
         ''' Query by list of identifiers '''
@@ -143,8 +152,72 @@ class GeoNodeRepository(object):
         else:  # no sort
             return [str(total), query.all()[startposition:startposition+int(maxrecords)]]
 
+
+    def insert(self, record, source, insert_date):
+        ''' Insert a record into the repository '''
+
+        return self._insert_or_update(record, source, insert_date, mode='insert')
+
+
+    def _insert_or_update(self, record, source, insert_date, mode='insert'):
+        ''' Insert or update a record in the repository '''
+
+        defaults, keywords = _prepare_resource(record, source, insert_date)
+
+        metadata_record, created = GenericResource.objects.get_or_create(uuid=record.uuid, defaults=defaults)
+        if not created and mode == 'insert':
+           raise RuntimeError('Record already exists')
+
+        metadata_record.save()
+
+        keywords = list(set(keywords))
+        if keywords:
+            if len(keywords) > 0:
+                metadata_record.keywords.add(*keywords)
+
+
     def _get_repo_filter(self, query):
         ''' Apply repository wide side filter / mask query '''
         if self.filter is not None:
             return query.extra(where=[self.filter])
         return query
+
+def _prepare_resource(recobj, source, insert_date):
+    '''
+    Prepare parsed record object to align with GeoNode internal fields
+    Given some pycsw GeoNode mappings are not internal fields (but
+    properties or functions), clean/update these fields which cannot
+    be applied to saving the model
+    '''
+
+    defaults = {}
+
+    print(dir(recobj))
+    # get model properties from XML
+    identifier, vals, regions, keywords = set_metadata(recobj.metadata_xml)
+
+    vals['metadata_uploaded_preserve'] = True
+    vals['metadata_xml'] = recobj.metadata_xml
+    vals['uuid'] = identifier
+    vals['remote'] = True
+    vals['csw_mdsource'] = source
+    vals['date'] = datetime.strptime(insert_date, '%Y-%m-%dT%H:%M:%SZ')
+    vals['csw_schema'] = recobj.csw_schema
+    vals['csw_typename'] = recobj.csw_typename
+    vals['csw_anytext'] = recobj.csw_anytext
+
+    for key, value in vals.items():
+        if key == 'spatial_representation_type':
+            value = SpatialRepresentationType(identifier=value)
+        elif key == 'topic_category':
+            value, created = TopicCategory.objects.get_or_create(
+                identifier=value.lower(),
+                defaults={'description': '', 'gn_description': value})
+            key = 'category'
+            defaults[key] = value
+        else:
+            defaults[key] = value
+
+    keywords = list(set(keywords))
+
+    return [defaults, keywords]
