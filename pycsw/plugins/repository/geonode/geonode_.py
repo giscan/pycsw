@@ -40,6 +40,11 @@ from geonode.base.models import (GenericResource, ResourceBase, Region,
 from geonode.layers.metadata import set_metadata
 from geonode.layers.utils import resolve_regions
 
+GEONODE_RESOURCETYPES = [
+    'http://www.opengis.net/cat/csw/2.0.2',
+    'http://www.opengis.net/wms'
+]
+
 class GeoNodeRepository(object):
     ''' Class to interact with underlying repository '''
     def __init__(self, context, repo_filter=None):
@@ -48,6 +53,8 @@ class GeoNodeRepository(object):
         self.context = context
         self.filter = repo_filter
         self.fts = False
+        self.label = 'GeoNode'
+        self.local_ingest = True
 
         self.dbtype = settings.DATABASES['default']['ENGINE'].split('.')[-1]
 
@@ -81,6 +88,10 @@ class GeoNodeRepository(object):
         for qbl in self.queryables:
             self.queryables['_all'].update(self.queryables[qbl])
         self.queryables['_all'].update(self.context.md_core_model['mappings'])
+
+        if 'Harvest' in self.context.model['operations'] and 'Transaction' in self.context.model['operations']:
+            self.context.model['operations']['Harvest']['parameters']['ResourceType']['values'] = GEONODE_RESOURCETYPES
+            self.context.model['operations']['Transaction']['parameters']['TransactionSchemas']['values'] = GEONODE_RESOURCETYPES
 
 
     def dataset(self):
@@ -119,7 +130,7 @@ class GeoNodeRepository(object):
 
     def query_source(self, source):
         ''' Query by source '''
-        return self._get_repo_filter(ResourceBase.objects).filter(source=source)
+        return self._get_repo_filter(ResourceBase.objects).filter(csw_mdsource=source)
 
     def query(self, constraint, sortby=None, typenames=None,
         maxrecords=10, startposition=0):
